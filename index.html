@@ -116,10 +116,9 @@
         </div>
     </div>
 
-    <script>
+   <script>
         // =========================================================
-        // ⭐️ 데이터 통합 영구 저장소 (Hardcoded Data)
-        // 복사된 데이터를 아래 {} 안에 그대로 붙여넣으세요!
+        // ⭐️ 데이터 통합 영구 저장소
         // =========================================================
         const PRELOADED_DATA = {"paths":[[{"lat":37.6191289,"lng":127.058032},{"lat":37.6205396,"lng":127.0587937},{"lat":37.6201316,"lng":127.0597379},{"lat":37.6198087,"lng":127.060446},{"lat":37.6194603,"lng":127.0606176},{"lat":37.6193923,"lng":127.0610897},{"lat":37.6190099,"lng":127.0613257},{"lat":37.6189164,"lng":127.0611219}],[{"lat":37.6191544,"lng":127.0581822},{"lat":37.618347,"lng":127.0590512},{"lat":37.61867,"lng":127.0597593},{"lat":37.6187889,"lng":127.0598023},{"lat":37.6189844,"lng":127.0602314},{"lat":37.6200297,"lng":127.0598237},{"lat":37.6199022,"lng":127.059652},{"lat":37.6194348,"lng":127.0593087},{"lat":37.6190099,"lng":127.0588688},{"lat":37.6190864,"lng":127.0586221}],[{"lat":37.6202251,"lng":127.0593946},{"lat":37.6194773,"lng":127.0588581},{"lat":37.6194518,"lng":127.0585577}],[{"lat":37.6200467,"lng":127.0598774},{"lat":37.6202846,"lng":127.0600919},{"lat":37.6204546,"lng":127.0599417},{"lat":37.620718,"lng":127.0592873},{"lat":37.620718,"lng":127.0592873}],[{"lat":37.6198427,"lng":127.0583753},{"lat":37.6200807,"lng":127.0575599},{"lat":37.6202846,"lng":127.057399}]],"start":{"lat":37.6191459,"lng":127.0580213},"end":{"lat":37.6203101,"lng":127.0600919}}; 
 
@@ -147,17 +146,17 @@
         let startCoord = null; let endCoord = null;
         let startMarker = null; let endMarker = null;
 
+        // 1. 지도 초기화 및 이벤트 연결
         window.onload = function() {
-            map = new naver.maps.Map('map', { center: new naver.maps.LatLng(37.619462, 127.059828), 
-        zoom: 17, 
-        draggable: true, // 초기엔 이동 가능
-        pinchZoom: true,
-        scrollWheel: true});
-            naver.maps.Event.addListener(map, 'mousedown', handleMouseDown);
-            naver.maps.Event.addListener(map, 'mousemove', handleMouseMove);
-            naver.maps.Event.addListener(map, 'mouseup', handleMouseUp);
-            naver.maps.Event.addListener(map, 'rightclick', cutAdminPath);
+            map = new naver.maps.Map('map', { 
+                center: new naver.maps.LatLng(37.619462, 127.059828), 
+                zoom: 17, 
+                draggable: true, 
+                pinchZoom: true,
+                scrollWheel: true
+            });
 
+            // 데이터 로드
             if (PRELOADED_DATA && PRELOADED_DATA.paths) {
                 PRELOADED_DATA.paths.forEach(pathData => {
                     const naverPath = pathData.map(p => new naver.maps.LatLng(p.lat, p.lng));
@@ -168,8 +167,83 @@
                 if (PRELOADED_DATA.end) { endCoord = new naver.maps.LatLng(PRELOADED_DATA.end.lat, PRELOADED_DATA.end.lng); createEndMarker(endCoord); }
                 drawAllPaths();
             }
+
+            // PC 마우스 이벤트
+            naver.maps.Event.addListener(map, 'mousedown', handleInputStart);
+            naver.maps.Event.addListener(map, 'mousemove', handleInputMove);
+            naver.maps.Event.addListener(map, 'mouseup', handleInputEnd);
+            naver.maps.Event.addListener(map, 'rightclick', cutAdminPath);
+
+            // 스마트폰 터치 이벤트 (스크롤 차단을 위해 브라우저 네이티브 이벤트 사용)
+            const mapEl = document.getElementById('map');
+            mapEl.addEventListener('touchstart', handleNativeTouchStart, { passive: false });
+            mapEl.addEventListener('touchmove', handleNativeTouchMove, { passive: false });
+            mapEl.addEventListener('touchend', handleNativeTouchEnd, { passive: false });
         };
 
+        // 2. 통합 입력 처리 로직 (마우스 + 터치 완벽 호환)
+        function handleInputStart(e, isNativeTouch = false) {
+            if (isNativeTouch && e.cancelable) e.preventDefault(); // 스크롤 방지
+            
+            if (currentMode === 'user') map.setOptions({ draggable: false }); // 화면 잠금
+
+            let coord = isNativeTouch ? getTouchCoord(e) : (e.coord || e.latLng);
+            if (!coord) return;
+
+            if (currentMode === 'admin') {
+                if (adminSubMode === 'start') { startCoord = coord; createStartMarker(coord); document.getElementById('adminModeBtn').click(); } 
+                else if (adminSubMode === 'end') { endCoord = coord; createEndMarker(coord); document.getElementById('adminModeBtn').click(); } 
+                else { 
+                    currentAdminPath.push(coord); 
+                    if (currentAdminPath.length > 1) createMagneticPoints(currentAdminPath[currentAdminPath.length - 2], currentAdminPath[currentAdminPath.length - 1]); 
+                    drawAllPaths(); 
+                }
+            } else if (currentMode === 'user') { 
+                isDrawing = true; 
+                currentRawPath = [coord]; 
+            }
+        }
+
+        function handleInputMove(e, isNativeTouch = false) {
+            if (isNativeTouch && e.cancelable) e.preventDefault(); // 이동 중 스크롤 완벽 차단
+
+            if (currentMode === 'user' && isDrawing) { 
+                let coord = isNativeTouch ? getTouchCoord(e) : (e.coord || e.latLng);
+                if (coord) {
+                    currentRawPath.push(coord); 
+                    drawAllPaths(); 
+                }
+            }
+        }
+
+        function handleInputEnd(e, isNativeTouch = false) {
+            map.setOptions({ draggable: true }); // 다시 이동 가능하게 복구
+
+            if (currentMode === 'user' && isDrawing) { 
+                isDrawing = false; 
+                const snappedPath = processSnapCorrection(currentRawPath); 
+                if (snappedPath.length > 0) userPaths.push(snappedPath); 
+                currentRawPath = []; 
+                drawAllPaths(); 
+            }
+        }
+
+        // 3. 네이티브 터치 좌표 변환 함수
+        function handleNativeTouchStart(e) { handleInputStart(e, true); }
+        function handleNativeTouchMove(e) { handleInputMove(e, true); }
+        function handleNativeTouchEnd(e) { handleInputEnd(e, true); }
+
+        function getTouchCoord(e) {
+            if(!map) return null;
+            const mapEl = document.getElementById('map');
+            const rect = mapEl.getBoundingClientRect();
+            const touch = e.touches[0] || e.changedTouches[0];
+            if(!touch) return null;
+            const pixel = new naver.maps.Point(touch.clientX - rect.left, touch.clientY - rect.top);
+            return map.getProjection().fromContainerPixelToLatLng(pixel);
+        }
+
+        // 4. UI 핀 및 경로 그리기
         function createStartMarker(coord) {
             if (startMarker) startMarker.setMap(null);
             startMarker = new naver.maps.Marker({ position: coord, map: map, icon: { content: `<div class="custom-pin" style="background-color: #2196F3;"></div>`, anchor: new naver.maps.Point(15, 30) } });
@@ -180,28 +254,18 @@
             endMarker = new naver.maps.Marker({ position: coord, map: map, icon: { content: `<div class="custom-pin" style="background-color: #FF3366;"></div>`, anchor: new naver.maps.Point(15, 30) } });
         }
 
-        // ⭐️ [개선됨] 데이터 추출 시 알림창(prompt) 대신 클립보드에 안전하게 자동 복사합니다.
         function exportAllData() {
             cutAdminPath(); 
             if(adminPaths.length === 0 && !startCoord && !endCoord) { alert("설정된 데이터(길 또는 핀)가 없습니다."); return; }
-            
             const integratedPackage = {
                 paths: adminPaths.map(path => path.map(p => ({lat: p.lat(), lng: p.lng()}))),
                 start: startCoord ? {lat: startCoord.lat(), lng: startCoord.lng()} : null,
                 end: endCoord ? {lat: endCoord.lat(), lng: endCoord.lng()} : null
             };
-            
             const jsonStr = JSON.stringify(integratedPackage);
-            
-            // 보이지 않는 텍스트박스를 만들어 클립보드에 100% 복사되게 처리
             const tempInput = document.createElement("textarea");
-            tempInput.value = jsonStr;
-            document.body.appendChild(tempInput);
-            tempInput.select();
-            document.execCommand("copy");
-            document.body.removeChild(tempInput);
-            
-            alert("✅ 데이터가 클립보드에 완벽하게 복사되었습니다!\n\n이제 소스코드의 'PRELOADED_DATA = {}' 상자 안에 Ctrl+V 로 덮어쓰기 하세요.");
+            tempInput.value = jsonStr; document.body.appendChild(tempInput); tempInput.select(); document.execCommand("copy"); document.body.removeChild(tempInput);
+            alert("✅ 데이터 복사 완료! 소스코드에 덮어쓰기 하세요.");
         }
 
         document.getElementById('setStartPinBtn').addEventListener('click', () => { currentMode = 'admin'; adminSubMode = 'start'; resetActiveVisuals(); document.getElementById('setStartPinBtn').classList.add('active-mode'); });
@@ -211,89 +275,8 @@
 
         function resetActiveVisuals() { document.querySelectorAll('.map-btn').forEach(b => b.classList.remove('active-mode')); }
         document.getElementById('clearMapBtn').addEventListener('click', () => { userPaths = []; currentRawPath = []; drawAllPaths(); });
-
         function cutAdminPath() { if (currentAdminPath.length > 0) { adminPaths.push([...currentAdminPath]); currentAdminPath = []; drawAllPaths(); } }
         function clearMapObjects() { renderedPolylines.forEach(line => line.setMap(null)); renderedPolylines = []; }
-
-        function handleMouseDown(e) {
-            const coord = e.coord;
-            if (currentMode === 'admin') {
-                if (adminSubMode === 'start') { startCoord = coord; createStartMarker(coord); document.getElementById('adminModeBtn').click(); } 
-                else if (adminSubMode === 'end') { endCoord = coord; createEndMarker(coord); document.getElementById('adminModeBtn').click(); } 
-                else { currentAdminPath.push(coord); if (currentAdminPath.length > 1) createMagneticPoints(currentAdminPath[currentAdminPath.length - 2], currentAdminPath[currentAdminPath.length - 1]); drawAllPaths(); }
-            }
-            else if (currentMode === 'user') { isDrawing = true; currentRawPath = [coord]; }
-        }
-        function handleMouseMove(e) { if (currentMode === 'user' && isDrawing) { currentRawPath.push(e.coord); drawAllPaths(); } }
-        function handleMouseUp(e) { if (currentMode === 'user' && isDrawing) { isDrawing = false; const snappedPath = processSnapCorrection(currentRawPath); if (snappedPath.length > 0) userPaths.push(snappedPath); currentRawPath = []; drawAllPaths(); } }
-
-        // --- [터치스크린 지원을 위한 이벤트 연결 로직] ---
-
-// 마우스와 터치 이벤트를 통합 처리하는 함수
-function handleInputStart(e) 
-{
-    // ⭐️ 터치 이벤트가 지도 드래그와 겹치지 않게 방지
-    if (e.originalEvent) {
-        e.originalEvent.preventDefault(); 
-    }
-
-    // [✍️ 경로 그리기 모드]일 때만 지도 드래그 강제 중지
-    if (currentMode === 'user') {
-        map.setOptions({ draggable: false });
-    }
-
-    let coord = e.coord || e.latLng;
-    // ... 이후 기존 로직 동일 ...
-}
-{
-    const coord = e.coord || e.latLng; // 마우스인지 터치인지 구분
-    if (currentMode === 'admin') {
-        if (adminSubMode === 'start') { startCoord = coord; createStartMarker(coord); document.getElementById('adminModeBtn').click(); } 
-        else if (adminSubMode === 'end') { endCoord = coord; createEndMarker(coord); document.getElementById('adminModeBtn').click(); } 
-        else { 
-            currentAdminPath.push(coord); 
-            if (currentAdminPath.length > 1) createMagneticPoints(currentAdminPath[currentAdminPath.length - 2], currentAdminPath[currentAdminPath.length - 1]); 
-            drawAllPaths(); 
-        }
-    } else if (currentMode === 'user') { 
-        isDrawing = true; 
-        currentRawPath = [coord]; 
-    }
-}
-
-function handleInputMove(e) {
-    const coord = e.coord || e.latLng;
-    if (currentMode === 'user' && isDrawing) { 
-        currentRawPath.push(coord); 
-        drawAllPaths(); 
-    }
-}
-
-function handleInputEnd(e) 
-{
-    isDrawing = false;
-    map.setOptions({ draggable: true }); // ⭐️ 그리기가 끝나면 다시 지도 이동 가능하게
-    // ... 이후 기존 로직 동일 ...
-}
-{
-    if (currentMode === 'user' && isDrawing) { 
-        isDrawing = false; 
-        const snappedPath = processSnapCorrection(currentRawPath); 
-        if (snappedPath.length > 0) userPaths.push(snappedPath); 
-        currentRawPath = []; 
-        drawAllPaths(); 
-    }
-}
-
-// ⭐️ 중요: 네이버 지도 API의 touch 이벤트 연결
-naver.maps.Event.addListener(map, 'mousedown', handleInputStart);
-naver.maps.Event.addListener(map, 'mousemove', handleInputMove);
-naver.maps.Event.addListener(map, 'mouseup', handleInputEnd);
-
-// 터치 이벤트는 네이버 지도 객체에 직접 등록해야 합니다
-naver.maps.Event.addListener(map, 'touchstart', handleInputStart);
-naver.maps.Event.addListener(map, 'touchmove', handleInputMove);
-naver.maps.Event.addListener(map, 'touchend', handleInputEnd);
 
         function createMagneticPoints(p1, p2) { const steps = 15; for(let i = 0; i <= steps; i++) magneticPoints.push(new naver.maps.LatLng(p1.lat() + (p2.lat() - p1.lat()) * (i / steps), p1.lng() + (p2.lng() - p1.lng()) * (i / steps))); }
         function processSnapCorrection(rawPath) {
